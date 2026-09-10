@@ -65,6 +65,8 @@ h2{font-size:20px;margin:0 0 6px;font-weight:700}
 .qcard{margin:14px 16px 0;background:var(--panel);border-radius:var(--r);box-shadow:var(--shadow);padding:18px 16px 12px}
 .qcard.anim{animation:qin .18s ease-out}
 @keyframes qin{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+.qcard.anim.back{animation-name:qinb}
+@keyframes qinb{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.qcard.anim{animation:none}.btn:active{transform:none}}
 .qmeta{display:flex;align-items:center;gap:8px;color:var(--ink2);font-size:13px;margin-bottom:10px;flex-wrap:wrap}
 .qmeta .qnum{font-weight:700;color:var(--ink);font-size:15px}
@@ -73,6 +75,8 @@ h2{font-size:20px;margin:0 0 6px;font-weight:700}
 .badge.bad{background:var(--bad-bg);color:var(--bad)}
 .badge.ok{background:var(--ok-bg);color:var(--ok)}
 .badge.gray{background:var(--line);color:var(--ink2)}
+.badge.tf{background:#E9E4F7;color:#5B3BB5}
+@media (prefers-color-scheme: dark){.badge.tf{background:#2B2342;color:#B9A4F2}}
 .stem{font-size:17px;line-height:1.65;margin-bottom:14px;overflow-wrap:anywhere;white-space:pre-line}
 .opt{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:12px 12px;margin-bottom:10px;border:1.5px solid var(--line);border-radius:12px;background:var(--panel);font-size:16px;line-height:1.5;transition:background .12s,border-color .12s,transform .08s;user-select:none;-webkit-user-select:none}
 .opt:active{transform:scale(.985)}
@@ -142,6 +146,7 @@ input.inp:focus{border-color:var(--accent)}
 .cell.bad{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
 .cell.cur{box-shadow:0 0 0 2.5px var(--accent);border-color:var(--accent);color:var(--accent)}
 .cell.cur.ok,.cell.cur.bad{color:inherit}
+.gl{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
 .sect{margin:22px 0 8px;font-size:13px;color:var(--ink2);font-weight:600}
 .danger-zone .btn{width:100%;margin-bottom:8px;justify-content:flex-start}
 #toast{position:fixed;left:50%;bottom:calc(110px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(10px);background:rgba(28,31,39,.92);color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:50;max-width:88%;text-align:center}
@@ -505,7 +510,7 @@ var Core = (function(){
 
   // ---------- state ----------
   var S;
-  function defaultState(){ return { v:1, subjects:[], settings:{ autoNext:true, shuffleOpts:false, wrongShuffle:false }, appliedSeeds:[] }; }
+  function defaultState(){ return { v:1, subjects:[], settings:{ autoNext:true, shuffleOpts:false, wrongShuffle:false, swipeLeftNext:true }, appliedSeeds:[] }; }
   function newSubject(id, name, color){ return { id:id, name:name, color:color, nextId:1, questions:[], stats:{}, wrong:[], rounds:{} }; }
   function pickColor(){ return COLORS[S.subjects.length % COLORS.length]; }
   function loadState(){
@@ -514,6 +519,7 @@ var Core = (function(){
     if (!s || !s.subjects) s = defaultState();
     if (!s.settings) s.settings = {};
     if (s.settings.autoNext === undefined) s.settings.autoNext = true;
+    if (s.settings.swipeLeftNext === undefined) s.settings.swipeLeftNext = true;
     if (!s.appliedSeeds) s.appliedSeeds = [];
     s.subjects.forEach(function(sub){ if (!sub.rounds) sub.rounds = {}; if (!sub.stats) sub.stats = {}; if (!sub.wrong) sub.wrong = []; if (!sub.nextId) sub.nextId = 1; });
     return s;
@@ -528,6 +534,16 @@ var Core = (function(){
   function qById(sub, id){ for (var i = 0; i < sub.questions.length; i++) if (sub.questions[i].id === id) return sub.questions[i]; return null; }
   function qIndex(sub, id){ for (var i = 0; i < sub.questions.length; i++) if (sub.questions[i].id === id) return i; return -1; }
   function validQ(q){ return q.opts.length >= 2 && !!q.ans && q.ans.split('').every(function(L){ return LET.indexOf(L) < q.opts.length; }); }
+  var TF_RE = /^(对|错|正确|错误|√|×|✓|✗|是|否|T|F|true|false)$/i;
+  function isTF(q){ return q.opts.length === 2 && TF_RE.test(q.opts[0].trim()) && TF_RE.test(q.opts[1].trim()); }
+  function typeRank(q){ return isTF(q) ? 2 : (q.multi ? 1 : 0); }
+  function typeLabel(q){ var r = typeRank(q); return r === 2 ? '判断' : (r === 1 ? '多选' : '单选'); }
+  function typeBadge(q, extra){ var r = typeRank(q); return '<span class="badge ' + (r === 2 ? 'tf' : (r === 1 ? 'multi' : '')) + '">' + typeLabel(q) + (extra || '') + '</span>'; }
+  function sortQuestions(sub){
+    sub.questions = sub.questions.map(function(q, i){ return { q: q, i: i }; })
+      .sort(function(a, b){ return (typeRank(a.q) - typeRank(b.q)) || (a.i - b.i); })
+      .map(function(x){ return x.q; });
+  }
   function qKey(q){ return (q.stem + '|' + q.opts.join('|')).replace(/\s+/g,''); }
   function addQuestions(sub, list, skipDup){
     var keys = {};
@@ -540,6 +556,7 @@ var Core = (function(){
       sub.questions.push({ id: sub.nextId++, stem: q.stem, opts: q.opts.slice(), ans: q.ans || '', multi: !!q.multi, exp: q.exp || '', flags: (q.flags || []).slice() });
       added++;
     });
+    if (added) sortQuestions(sub);
     return { added: added, skipped: skipped };
   }
   function refreshFlags(q){
@@ -627,6 +644,20 @@ var Core = (function(){
       });
       S.migrated.demo1 = true; save();
     }
+    if (!S.migrated.sort1) {
+      S.subjects.forEach(function(sub){
+        sortQuestions(sub);
+        var r = sub.rounds.seq;
+        if (r && !r.finished) {
+          r.order = sub.questions.filter(validQ).map(function(q){ return q.id; });
+          var first = -1;
+          for (var i = 0; i < r.order.length; i++) if (!r.answers[r.order[i]]) { first = i; break; }
+          r.pos = first < 0 ? r.order.length : first;
+        }
+      });
+      S.migrated.sort1 = true; save();
+    }
+    if (!S.migrated.swipe1) { delete S.settings.swipeRightNext; S.settings.swipeLeftNext = true; S.migrated.swipe1 = true; save(); }
   }
   function ensureDefaults(){
     if (!S.subjects.length) { DEFAULT_SUBJECTS.forEach(function(d, i){ S.subjects.push(newSubject(d.id, d.name, COLORS[i])); }); save(); }
@@ -640,6 +671,7 @@ var Core = (function(){
     if (mode === 'wrong') {
       ids = sub.wrong.map(function(w){ return w.id; }).filter(function(id){ var q = qById(sub, id); return q && validQ(q); });
       if (S.settings.wrongShuffle) ids = shuffle(ids);
+      else { var pos = {}; sub.questions.forEach(function(q, i){ pos[q.id] = i; }); ids.sort(function(a, b){ return pos[a] - pos[b]; }); }
     } else {
       ids = sub.questions.filter(validQ).map(function(q){ return q.id; });
       if (mode === 'shuf') ids = shuffle(ids);
@@ -726,6 +758,7 @@ var Core = (function(){
   // ---------- render ----------
   var app = document.getElementById('app');
   var P = null; // ephemeral practice state
+  var animDir = 'fwd';
   var IMP = null; // import preview
   var MG = { sel: null, q: '', filter: 'all' }; // manage screen state
 
@@ -796,15 +829,15 @@ var Core = (function(){
     }
     if (r.pos >= r.order.length) { if (!r.finished) { r.finished = true; save(); } return renderSummary(sub, r); }
     var q = qById(sub, r.order[r.pos]);
-    if (!P || P.qid !== q.id) P = { qid: q.id, sel: {}, token: 0, anim: true };
+    if (!P || P.qid !== q.id) { P = { qid: q.id, sel: {}, token: 0, anim: animDir }; animDir = 'fwd'; }
     var a = r.answers[q.id], perm = optPerm(q, r);
     var title = sub.name + ' · ' + MODE_NAME[mode];
     var h = topbar(title, '<div style="display:flex"><button class="iconbtn" data-act="overview" data-sid="' + sub.id + '" data-mode="' + mode + '" aria-label="题目总览"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button><button class="iconbtn" data-act="pmenu" aria-label="更多">⋯</button></div>');
     h += '<div class="pbar"><div class="pfill" style="width:' + Math.round((r.pos + (a ? 1 : 0)) / r.order.length * 100) + '%"></div></div>';
-    h += '<div class="qcard' + (P.anim ? ' anim' : '') + '">';
+    h += '<div class="qcard' + (P.anim ? ' anim' + (P.anim === 'back' ? ' back' : '') : '') + '">';
     var w = inWrong(sub, q.id);
     h += '<div class="qmeta"><span class="qnum">第 ' + (r.pos + 1) + ' 题</span><span>/ ' + r.order.length + '</span>';
-    h += '<span class="badge ' + (q.multi ? 'multi' : '') + '">' + (q.multi ? '多选' : '单选') + '</span>';
+    h += typeBadge(q);
     if (mode !== 'seq' || qIndex(sub, q.id) !== r.pos) h += '<span class="muted">题库 #' + (qIndex(sub, q.id) + 1) + '</span>';
     if (mode === 'wrong' && w) h += '<span class="badge bad">错 ' + w.n + ' 次</span>';
     else if (mode !== 'wrong' && w) h += '<span class="badge gray">在错题本</span>';
@@ -834,7 +867,7 @@ var Core = (function(){
     var nsel = Object.keys(P.sel).length;
     h += '<div class="bottombar"><button class="btn ghost prev" data-act="prev"' + (r.pos === 0 ? ' disabled' : '') + '>上一题</button>';
     if (a) h += '<button class="btn primary" data-act="next">' + (last ? '完成' : '下一题') + '</button>';
-    else if (q.multi) h += '<button class="btn primary" data-act="confirm"' + (nsel ? '' : ' disabled') + '>确定</button>';
+    else if (q.multi) h += '<button class="btn primary" data-act="confirm"' + (nsel ? '' : ' disabled') + '>确认</button>';
     else h += '<button class="btn primary" disabled>选一个答案</button>';
     h += '</div>';
     return h;
@@ -876,7 +909,16 @@ var Core = (function(){
     h += '<div class="ovstats"><span class="badge ok">答对 ' + ok + '</span><span class="badge bad">答错 ' + bad + '</span><span class="badge gray">未做 ' + left + '</span></div>';
     h += '<div class="hint" style="margin-top:8px">点任意题号可跳到那道题' + (mode === 'seq' ? '' : '（本轮顺序编号，非题库序号）') + '。</div></div>';
     h += '<div class="grid">';
+    var lastRank = -1, GROUP = ['单选题', '多选题', '判断题'];
     for (var i = 0; i < total; i++) {
+      if (mode === 'seq') {
+        var qi = qById(sub, r.order[i]), rk = qi ? typeRank(qi) : lastRank;
+        if (rk !== lastRank) {
+          var end = i; while (end + 1 < total) { var qn = qById(sub, r.order[end + 1]); if (!qn || typeRank(qn) !== rk) break; end++; }
+          h += '<div class="gl">' + GROUP[rk] + '　' + (i + 1) + '～' + (end + 1) + '</div>';
+          lastRank = rk;
+        }
+      }
       var a = r.answers[r.order[i]], cls = 'cell';
       if (a) cls += a.ok ? ' ok' : ' bad';
       if (i === curIdx) cls += ' cur';
@@ -914,7 +956,7 @@ var Core = (function(){
     P.anim = false; render();
     if (ok && S.settings.autoNext) {
       var tok = ++P.token, qid = q.id;
-      setTimeout(function(){ if (view.name === 'practice' && P && P.qid === qid && P.token === tok) next(); }, 700);
+      setTimeout(function(){ if (view.name === 'practice' && P && P.qid === qid && P.token === tok) next(); }, 500);
     }
   }
   function next(){
@@ -924,8 +966,36 @@ var Core = (function(){
   }
   function prev(){
     var c = curRound(); if (!c || !c.r || c.r.pos === 0) return;
-    c.r.pos--; c.r.finished = false; save(); P = null; render(); window.scrollTo(0, 0);
+    c.r.pos--; c.r.finished = false; save(); P = null; animDir = 'back'; render(); window.scrollTo(0, 0);
   }
+  // free navigation by swipe / arrow keys: not limited to answered questions
+  function swipeNext(){
+    var c = curRound(); if (!c || !c.r) return;
+    var r = c.r;
+    if (r.pos >= r.order.length) return;
+    if (r.pos < r.order.length - 1) { next(); return; }
+    var left = 0; r.order.forEach(function(id){ if (!r.answers[id]) left++; });
+    if (left) toast('已经是最后一题了，还有 ' + left + ' 题没做'); else next();
+  }
+  function swipePrev(){
+    var c = curRound(); if (!c || !c.r) return;
+    if (c.r.pos === 0) { toast('已经是第一题了'); return; }
+    prev();
+  }
+  var sw = null;
+  app.addEventListener('touchstart', function(e){
+    if (view.name !== 'practice' || modalOpen || !e.touches || e.touches.length !== 1) { sw = null; return; }
+    var t = e.touches[0]; sw = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }, { passive: true });
+  app.addEventListener('touchmove', function(e){ if (sw && e.touches && e.touches.length !== 1) sw = null; }, { passive: true });
+  app.addEventListener('touchend', function(e){
+    if (!sw || view.name !== 'practice' || modalOpen || !e.changedTouches || !e.changedTouches.length) { sw = null; return; }
+    var t = e.changedTouches[0], dx = t.clientX - sw.x, dy = t.clientY - sw.y, dt = Date.now() - sw.t; sw = null;
+    if (dt > 800 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    var leftIsNext = S.settings.swipeLeftNext !== false;
+    var forward = (dx < 0) === leftIsNext;
+    if (forward) swipeNext(); else swipePrev();
+  }, { passive: true });
   function practiceMenu(){
     var c = currentQ(); if (!c) return;
     var sub = c.sub, q = c.q, items = [];
@@ -959,7 +1029,7 @@ var Core = (function(){
       h += '<div class="list">';
       sub.wrong.forEach(function(w){
         var q = qById(sub, w.id); if (!q) return;
-        h += '<div class="item" data-act="editq" data-qid="' + q.id + '"><div class="no">#' + (qIndex(sub, q.id) + 1) + '</div><div class="body"><div class="st">' + esc(q.stem) + '</div><div class="tags"><span class="badge bad">错 ' + w.n + ' 次</span><span class="badge ' + (q.multi ? 'multi' : '') + '">' + (q.multi ? '多选' : '单选') + '</span></div></div>';
+        h += '<div class="item" data-act="editq" data-qid="' + q.id + '"><div class="no">#' + (qIndex(sub, q.id) + 1) + '</div><div class="body"><div class="st">' + esc(q.stem) + '</div><div class="tags"><span class="badge bad">错 ' + w.n + ' 次</span>' + typeBadge(q) + '</div></div>';
         h += '<button class="btn sm act" data-act="rmwrong" data-qid="' + q.id + '">移出</button></div>';
       });
       h += '</div><div class="pad danger-zone" style="margin-top:8px"><button class="btn danger" data-act="clearwrong">清空错题本</button></div>';
@@ -973,7 +1043,8 @@ var Core = (function(){
     var st = subStats(sub);
     var h = topbar(sub.name + ' · 题库管理', '<button class="iconbtn" data-act="submenu" aria-label="更多">⋯</button>');
     h += '<div class="pad">';
-    h += '<div class="muted small" style="margin-bottom:10px">共 ' + st.total + ' 题' + (st.total ? '，单选 ' + sub.questions.filter(function(q){ return validQ(q) && !q.multi; }).length + '，多选 ' + sub.questions.filter(function(q){ return validQ(q) && q.multi; }).length : '') + (st.total - st.valid ? '，<span style="color:var(--warn)">待修正 ' + (st.total - st.valid) + '</span>' : '') + '</div>';
+    var nTf = sub.questions.filter(function(q){ return validQ(q) && typeRank(q) === 2; }).length;
+    h += '<div class="muted small" style="margin-bottom:10px">共 ' + st.total + ' 题' + (st.total ? '，单选 ' + sub.questions.filter(function(q){ return validQ(q) && typeRank(q) === 0; }).length + '，多选 ' + sub.questions.filter(function(q){ return validQ(q) && typeRank(q) === 1; }).length + (nTf ? '，判断 ' + nTf : '') : '') + (st.total - st.valid ? '，<span style="color:var(--warn)">待修正 ' + (st.total - st.valid) + '</span>' : '') + '</div>';
     h += '<div class="row" style="margin-bottom:10px"><button class="btn primary" data-act="import" data-sid="' + sub.id + '">导入题目</button><button class="btn" data-act="addq">手动添加</button>' + (MG.sel ? '<button class="btn" data-act="selcancel">取消选择</button>' : '<button class="btn" data-act="selmode"' + (st.total ? '' : ' disabled') + '>批量删除</button>') + '</div>';
     if (st.total) {
       h += '<input class="search" id="mg-search" type="search" placeholder="搜索题目" value="' + esc(MG.q) + '">';
@@ -999,7 +1070,7 @@ var Core = (function(){
       if (MG.sel) h += '<div class="chk">' + (MG.sel[q.id] ? '✓' : '') + '</div>';
       h += '<div class="no">' + (idx + 1) + '</div><div class="body"><div class="st">' + esc(q.stem || '（缺题干）') + '</div><div class="tags">';
       if (q.flags && q.flags.length) q.flags.forEach(function(f){ h += '<span class="badge bad">' + esc(f) + '</span>'; });
-      else h += '<span class="badge ' + (q.multi ? 'multi' : '') + '">' + (q.multi ? '多选' : '单选') + ' ' + q.ans + '</span>';
+      else h += typeBadge(q, ' ' + q.ans);
       if (inWrong(sub, q.id)) h += '<span class="badge gray">错题</span>';
       var s2 = sub.stats[q.id]; if (s2 && s2.d) h += '<span class="badge gray">做过 ' + s2.d + ' 次</span>';
       h += '</div></div></div>';
@@ -1074,7 +1145,7 @@ var Core = (function(){
     var multi = ans.length > 1 || ED.multi;
     if (ED.qid != null) {
       var q = qById(sub, ED.qid); if (!q) return;
-      q.stem = stem; q.opts = opts; q.ans = ans; q.multi = multi; q.exp = ED.exp.trim(); refreshFlags(q);
+      q.stem = stem; q.opts = opts; q.ans = ans; q.multi = multi; q.exp = ED.exp.trim(); refreshFlags(q); sortQuestions(sub);
       save(); toast('已保存'); ED = null; back();
     } else {
       addQuestions(sub, [{ stem: stem, opts: opts, ans: ans, multi: multi, exp: ED.exp.trim(), flags: [] }], false);
@@ -1164,6 +1235,7 @@ var Core = (function(){
     h += toggleRow('autoNext', '答对自动下一题', '答对后停一下自动翻页，答错则停留查看答案');
     h += toggleRow('shuffleOpts', '选项乱序', '打乱每道题选项的位置，防止靠位置记答案');
     h += toggleRow('wrongShuffle', '错题本乱序', '做错题时打乱顺序');
+    h += toggleRow('swipeLeftNext', '左滑下一题', '开：手指从右往左划是下一题、从左往右划是上一题；关：反过来');
     h += '</div>';
     h += '<div class="sect">备份</div><div class="panel"><div class="stack" style="margin-top:0">';
     h += '<button class="btn primary" data-act="export">导出全部数据（题目 + 进度 + 错题本）</button>';
@@ -1286,8 +1358,8 @@ var Core = (function(){
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       if (a) next(); else if (c.q.multi && Object.keys(P.sel).length) judge(Object.keys(P.sel).join(''));
-    } else if (e.key === 'ArrowLeft') prev();
-    else if (e.key === 'ArrowRight' && a) next();
+    } else if (e.key === 'ArrowLeft') swipePrev();
+    else if (e.key === 'ArrowRight') swipeNext();
   });
 
   // ---------- boot ----------
@@ -1300,7 +1372,7 @@ var Core = (function(){
     try { navigator.serviceWorker.register('./sw.js').catch(function(){}); } catch(e){}
   }
 
-  if (window.__TEST__) window.__app = { actions: actions, render: render, getState: function(){ return S; }, getView: function(){ return view; }, setView: function(v){ view = v; P = null; render(); }, judge: judge, pick: pick, next: next, prev: prev, getP: function(){ return P; }, getIMP: function(){ return IMP; }, setIMP: function(v){ IMP = v; }, deleteQuestions: deleteQuestions, startRound: startRound, subById: subById, MG: function(){ return MG; }, getED: function(){ return ED; }, closeModal: closeModal, modalActions: function(){ return modalActions; } };
+  if (window.__TEST__) window.__app = { actions: actions, render: render, getState: function(){ return S; }, getView: function(){ return view; }, setView: function(v){ view = v; P = null; render(); }, judge: judge, pick: pick, next: next, prev: prev, getP: function(){ return P; }, getIMP: function(){ return IMP; }, setIMP: function(v){ IMP = v; }, deleteQuestions: deleteQuestions, startRound: startRound, subById: subById, MG: function(){ return MG; }, getED: function(){ return ED; }, closeModal: closeModal, modalActions: function(){ return modalActions; }, swipeNext: swipeNext, swipePrev: swipePrev, typeRank: typeRank, fire: function(t, ev){ /* no-op in browsers */ } };
 })();
 </script>
 </body>

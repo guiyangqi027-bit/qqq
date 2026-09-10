@@ -1,5 +1,5 @@
 /* 刷题本 离线缓存：联网时取最新，断网时用缓存 */
-var CACHE = 'shuati-cache-v2';
+var CACHE = 'shuati-cache-v3';
 var ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () { return self.skipWaiting(); }));
@@ -12,8 +12,10 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  var isPage = req.mode === 'navigate' || /\.html?$|\/$/.test(new URL(req.url).pathname);
+  var doFetch = isPage ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : fetch(req);
   e.respondWith(
-    fetch(req).then(function (res) {
+    doFetch.then(function (res) {
       if (res && res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); }
       return res;
     }).catch(function () {
